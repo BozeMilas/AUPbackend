@@ -8,7 +8,17 @@ from extensions import db, migrate
 from models import Kolegij, Profesor, TerminNastave, Ucionica
 
 app = Flask(__name__)
-CORS(app)
+CORS(
+    app,
+    resources={
+        r"/*": {
+            "origins": [
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+            ]
+        }
+    },
+)
 
 app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL", "sqlite:///aup1.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
@@ -36,6 +46,38 @@ def get_or_404(model, item_id, message):
         return None, (jsonify({"message": message}), 404)
 
     return item, None
+
+
+def get_json_data():
+    return request.get_json(silent=True) or {}
+
+
+def create_entity(model, attributes):
+    entity = model(**attributes)
+    db.session.add(entity)
+    db.session.commit()
+    return entity
+
+
+def update_entity(entity, attributes):
+    for key, value in attributes.items():
+        setattr(entity, key, value)
+
+    db.session.commit()
+    return entity
+
+
+def value_or_current(data, key, current_value, transform=None):
+    if key not in data:
+        return current_value
+
+    value = data.get(key)
+    return transform(value) if transform else value
+
+
+def value_or_none(data, key, transform=None):
+    value = data.get(key)
+    return transform(value) if transform else value
 
 
 @app.route("/")
@@ -102,20 +144,20 @@ def profesor(item_id):
 
 @app.route("/profesori", methods=["POST"])
 def novi_profesor():
-    data = request.get_json(silent=True) or {}
+    data = get_json_data()
 
     if not data.get("ime") or not data.get("prezime") or not data.get("email"):
         return jsonify({"message": "Ime, prezime i e-pošta su obavezni."}), 400
 
-    profesor = Profesor(
-        ime=data.get("ime"),
-        prezime=data.get("prezime"),
-        email=data.get("email"),
-        titula=data.get("titula"),
+    profesor = create_entity(
+        Profesor,
+        {
+            "ime": data.get("ime"),
+            "prezime": data.get("prezime"),
+            "email": data.get("email"),
+            "titula": data.get("titula"),
+        },
     )
-
-    db.session.add(profesor)
-    db.session.commit()
 
     return jsonify(profesor.to_dict()), 201
 
@@ -126,13 +168,16 @@ def uredi_profesora(item_id):
     if error:
         return error
 
-    data = request.get_json(silent=True) or {}
-    profesor.ime = data.get("ime", profesor.ime)
-    profesor.prezime = data.get("prezime", profesor.prezime)
-    profesor.email = data.get("email", profesor.email)
-    profesor.titula = data.get("titula")
-
-    db.session.commit()
+    data = get_json_data()
+    update_entity(
+        profesor,
+        {
+            "ime": value_or_current(data, "ime", profesor.ime),
+            "prezime": value_or_current(data, "prezime", profesor.prezime),
+            "email": value_or_current(data, "email", profesor.email),
+            "titula": value_or_none(data, "titula"),
+        },
+    )
 
     return jsonify(profesor.to_dict())
 
@@ -207,20 +252,20 @@ def kolegij(item_id):
 
 @app.route("/kolegiji", methods=["POST"])
 def novi_kolegij_crud():
-    data = request.get_json(silent=True) or {}
+    data = get_json_data()
 
     if not data.get("naziv") or data.get("ects") is None:
         return jsonify({"message": "Naziv i ECTS su obavezni."}), 400
 
-    kolegij = Kolegij(
-        naziv=data.get("naziv"),
-        ects=as_int(data.get("ects")),
-        semestar=as_int(data.get("semestar")),
-        nositelj_id=as_int(data.get("nositelj_id")),
+    kolegij = create_entity(
+        Kolegij,
+        {
+            "naziv": data.get("naziv"),
+            "ects": as_int(data.get("ects")),
+            "semestar": as_int(data.get("semestar")),
+            "nositelj_id": as_int(data.get("nositelj_id")),
+        },
     )
-
-    db.session.add(kolegij)
-    db.session.commit()
 
     return jsonify(kolegij.to_dict()), 201
 
@@ -231,15 +276,16 @@ def uredi_kolegij(item_id):
     if error:
         return error
 
-    data = request.get_json(silent=True) or {}
-    if data.get("naziv") is not None:
-        kolegij.naziv = data.get("naziv")
-    if data.get("ects") is not None:
-        kolegij.ects = as_int(data.get("ects"))
-    kolegij.semestar = as_int(data.get("semestar"))
-    kolegij.nositelj_id = as_int(data.get("nositelj_id"))
-
-    db.session.commit()
+    data = get_json_data()
+    update_entity(
+        kolegij,
+        {
+            "naziv": value_or_current(data, "naziv", kolegij.naziv),
+            "ects": value_or_current(data, "ects", kolegij.ects, as_int),
+            "semestar": value_or_none(data, "semestar", as_int),
+            "nositelj_id": value_or_none(data, "nositelj_id", as_int),
+        },
+    )
 
     return jsonify(kolegij.to_dict())
 
@@ -273,19 +319,19 @@ def ucionica(item_id):
 
 @app.route("/ucionice", methods=["POST"])
 def nova_ucionica():
-    data = request.get_json(silent=True) or {}
+    data = get_json_data()
 
     if not data.get("oznaka") or data.get("kapacitet") is None:
         return jsonify({"message": "Oznaka i kapacitet su obavezni."}), 400
 
-    ucionica = Ucionica(
-        oznaka=data.get("oznaka"),
-        kat=as_int(data.get("kat")),
-        kapacitet=as_int(data.get("kapacitet")),
+    ucionica = create_entity(
+        Ucionica,
+        {
+            "oznaka": data.get("oznaka"),
+            "kat": as_int(data.get("kat")),
+            "kapacitet": as_int(data.get("kapacitet")),
+        },
     )
-
-    db.session.add(ucionica)
-    db.session.commit()
 
     return jsonify(ucionica.to_dict()), 201
 
@@ -296,14 +342,15 @@ def uredi_ucionicu(item_id):
     if error:
         return error
 
-    data = request.get_json(silent=True) or {}
-    if data.get("oznaka") is not None:
-        ucionica.oznaka = data.get("oznaka")
-    ucionica.kat = as_int(data.get("kat"))
-    if data.get("kapacitet") is not None:
-        ucionica.kapacitet = as_int(data.get("kapacitet"))
-
-    db.session.commit()
+    data = get_json_data()
+    update_entity(
+        ucionica,
+        {
+            "oznaka": value_or_current(data, "oznaka", ucionica.oznaka),
+            "kat": value_or_none(data, "kat", as_int),
+            "kapacitet": value_or_current(data, "kapacitet", ucionica.kapacitet, as_int),
+        },
+    )
 
     return jsonify(ucionica.to_dict())
 
@@ -353,21 +400,21 @@ def termin_nastave(item_id):
 
 @app.route("/termini-nastave", methods=["POST"])
 def novi_termin_nastave():
-    data = request.get_json(silent=True) or {}
+    data = get_json_data()
 
     if not data.get("dan_u_tjednu") or not data.get("vrijeme_pocetka") or data.get("trajanje") is None:
         return jsonify({"message": "Dan, vrijeme početka i trajanje su obavezni."}), 400
 
-    termin = TerminNastave(
-        dan_u_tjednu=data.get("dan_u_tjednu"),
-        vrijeme_pocetka=data.get("vrijeme_pocetka"),
-        trajanje=as_int(data.get("trajanje")),
-        profesor_id=as_int(data.get("profesor_id")),
-        kolegij_id=as_int(data.get("kolegij_id")),
+    termin = create_entity(
+        TerminNastave,
+        {
+            "dan_u_tjednu": data.get("dan_u_tjednu"),
+            "vrijeme_pocetka": data.get("vrijeme_pocetka"),
+            "trajanje": as_int(data.get("trajanje")),
+            "profesor_id": as_int(data.get("profesor_id")),
+            "kolegij_id": as_int(data.get("kolegij_id")),
+        },
     )
-
-    db.session.add(termin)
-    db.session.commit()
 
     return jsonify(termin.to_dict()), 201
 
@@ -378,17 +425,17 @@ def uredi_termin_nastave(item_id):
     if error:
         return error
 
-    data = request.get_json(silent=True) or {}
-    if data.get("dan_u_tjednu") is not None:
-        termin.dan_u_tjednu = data.get("dan_u_tjednu")
-    if data.get("vrijeme_pocetka") is not None:
-        termin.vrijeme_pocetka = data.get("vrijeme_pocetka")
-    if data.get("trajanje") is not None:
-        termin.trajanje = as_int(data.get("trajanje"))
-    termin.profesor_id = as_int(data.get("profesor_id"))
-    termin.kolegij_id = as_int(data.get("kolegij_id"))
-
-    db.session.commit()
+    data = get_json_data()
+    update_entity(
+        termin,
+        {
+            "dan_u_tjednu": value_or_current(data, "dan_u_tjednu", termin.dan_u_tjednu),
+            "vrijeme_pocetka": value_or_current(data, "vrijeme_pocetka", termin.vrijeme_pocetka),
+            "trajanje": value_or_current(data, "trajanje", termin.trajanje, as_int),
+            "profesor_id": value_or_none(data, "profesor_id", as_int),
+            "kolegij_id": value_or_none(data, "kolegij_id", as_int),
+        },
+    )
 
     return jsonify(termin.to_dict())
 
